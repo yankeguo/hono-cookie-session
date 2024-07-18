@@ -1,6 +1,6 @@
 {
   "name": "@yankeguo/hono-cookie-session",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Encrypted Cookie Session for Hono, Compatible with Cloudflare Workers",
   "main": "dist/index.js",
   "scripts": {

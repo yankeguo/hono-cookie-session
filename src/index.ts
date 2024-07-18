@@ -10,6 +10,21 @@ import {
   toUint8Array as base64Decode,
 } from "js-base64";
 
+interface _EncryptedBox {
+  salt: Uint8Array;
+  iv: Uint8Array; // 12 bytes
+  enc: Uint8Array;
+}
+
+interface _ExpirableBox<T> {
+  exp: number;
+  val: T;
+}
+
+/*
+ * session <--> expirableBox <--> encryptedBox <--> base64 <--> cookie
+ */
+
 /**
  * Encrypted session.
  *
@@ -21,37 +36,45 @@ export class EncryptedSession<
   P extends string = any,
   I extends Input = {},
 > {
-  private key?: CryptoKey;
+  private rootKey?: CryptoKey;
 
   /**
    *
    * @param ctx hono context
-   * @param rawKey raw key for encryption
+   * @param rootKeyRaw raw key for encryption
    * @param name name of the cookie
    * @param cookieOptions cookie options
    */
   constructor(
     public readonly ctx: Context<E, P, I>,
-    public readonly rawKey: string,
+    public readonly rootKeyRaw: string,
     public readonly name: string,
     public readonly cookieOptions?: CookieOptions,
   ) {}
 
-  private async _getKey(): Promise<CryptoKey> {
-    if (this.key) {
-      return this.key;
+  private async _deriveKey(salt: Uint8Array): Promise<CryptoKey> {
+    if (!this.rootKey) {
+      this.rootKey = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(this.rootKeyRaw),
+        "PBKDF2",
+        false,
+        ["deriveKey"],
+      );
     }
-    this.key = await crypto.subtle.importKey(
-      "raw",
-      await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(this.rawKey),
-      ),
-      { name: "AES-GCM" },
-      true,
+
+    return await crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations: 100000,
+        hash: "SHA-256",
+      } as Pbkdf2Params,
+      this.rootKey,
+      { name: "AES-GCM", length: 256 },
+      false,
       ["encrypt", "decrypt"],
     );
-    return this.key;
   }
 
   /**
@@ -73,33 +96,50 @@ export class EncryptedSession<
   public async mustGet(): Promise<T> {
     const cookie = getCookie(this.ctx, this.name);
     if (!cookie) {
-      throw new Error("session not found");
+      throw new Error("session not found: cookie not found");
     }
-    const key = await this._getKey();
+
+    const encryptedBox = msgPackDecode(base64Decode(cookie)) as _EncryptedBox;
+
+    // validate encrypted box
+    if (!encryptedBox) {
+      throw new Error("session not found: encrypted box not found");
+    }
+
+    if (!(encryptedBox.iv instanceof Uint8Array)) {
+      throw new Error("session malformed: encrypted box iv malformed");
+    }
+    if (!(encryptedBox.enc instanceof Uint8Array)) {
+      throw new Error("session malformed: encrypted box encrypted malformed");
+    }
+    if (!(encryptedBox.salt instanceof Uint8Array)) {
+      throw new Error("session malformed: encrypted box salt malformed");
+    }
+
     const decrypted = await crypto.subtle.decrypt(
-      "AES-GCM",
-      key,
-      base64Decode(cookie),
+      { name: "AES-GCM", iv: encryptedBox.iv },
+      await this._deriveKey(encryptedBox.salt),
+      encryptedBox.enc,
     );
-    const decoded = msgPackDecode(new Uint8Array(decrypted)) as {
-      expiresAt: number;
-      value: T;
-    };
-    if (!decoded) {
+
+    const expirableBox = msgPackDecode(decrypted) as _ExpirableBox<T>;
+
+    // validate expirable box
+    if (!expirableBox) {
       throw new Error("session not found");
     }
-    if (typeof decoded.expiresAt !== "number") {
+    if (typeof expirableBox.exp !== "number") {
       throw new Error("session malformed");
     }
-    if (decoded.expiresAt < Date.now()) {
+    if (expirableBox.exp < Date.now()) {
       this.delete();
       throw new Error("session expired");
     }
-    if (!decoded.value) {
+    if (!expirableBox.val) {
       throw new Error("session malformed");
     }
 
-    return decoded.value;
+    return expirableBox.val;
   }
 
   /**
@@ -107,16 +147,33 @@ export class EncryptedSession<
    * @param value session value
    */
   public async set(value: T) {
-    const key = await this._getKey();
     const expiresAt = this.cookieOptions?.maxAge
       ? Date.now() + this.cookieOptions?.maxAge * 1000
       : this.cookieOptions?.expires
         ? this.cookieOptions?.expires.getTime()
         : Number.MAX_SAFE_INTEGER;
-    const encoded = msgPackEncode({ expiresAt, value });
-    const encrypted = await crypto.subtle.encrypt("AES-GCM", key, encoded);
-    const encodedBase64 = base64Encode(new Uint8Array(encrypted));
-    setCookie(this.ctx, this.name, encodedBase64, this.cookieOptions);
+    const expirableBox: _ExpirableBox<T> = { exp: expiresAt, val: value };
+
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv } as AesGcmParams,
+      await this._deriveKey(salt),
+      msgPackEncode(expirableBox),
+    );
+    const encryptedBox: _EncryptedBox = {
+      iv,
+      salt,
+      enc: new Uint8Array(encrypted),
+    };
+
+    setCookie(
+      this.ctx,
+      this.name,
+      base64Encode(msgPackEncode(encryptedBox)),
+      this.cookieOptions,
+    );
   }
 
   /**
