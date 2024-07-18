@@ -7,6 +7,10 @@
     "format": "prettier --write .",
     "build": "tsc"
   },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
   "keywords": [
     "hono",
     "session",
