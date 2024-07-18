@@ -1,0 +1,34 @@
+{
+  "name": "@yankeguo/hono-cookie-session",
+  "version": "0.1.0",
+  "description": "Encrypted Cookie Session for Hono, Compatible with Cloudflare Workers",
+  "main": "dist/index.js",
+  "scripts": {
+    "format": "prettier --write .",
+    "build": "tsc"
+  },
+  "keywords": [
+    "hono",
+    "session",
+    "cookie",
+    "cloudflare"
+  ],
+  "author": {
+    "name": "GUO YANKE",
+    "email": "hi@yankeguo.com",
+    "url": "https://yankeguo.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "hono": "^4.5.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.3"
+  },
+  "peerDependencies": {
+    "hono": "^4.5.0"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "3.0.0-beta2",
+    "js-base64": "^3.7.7"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "esModuleInterop": true,
+    "rootDir": "./src",
+    "sourceMap": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "commonjs",
+    "outDir": "./dist",
+    "skipDefaultLibCheck": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "es2021"
+  },
+  "include": ["src/**/*"]
+}
